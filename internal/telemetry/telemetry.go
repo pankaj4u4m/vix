@@ -28,6 +28,13 @@ type Config struct {
 	Enabled bool   // false disables all telemetry (from settings.json feature flag)
 }
 
+// embeddedAPIKey is the PostHog project key injected at build time via
+// -ldflags "-X .../telemetry.embeddedAPIKey=<key>" (see script/build.sh, which
+// reads VIX_POSTHOG_API_KEY from the environment or .env). It is empty in plain
+// `go build` / dev builds, which keeps telemetry inert there. There is no
+// runtime env var or .env fallback — the key lives only in the binary.
+var embeddedAPIKey string
+
 var (
 	client    posthog.Client
 	deviceID  string
@@ -57,8 +64,9 @@ func Init(cfg Config) {
 			return
 		}
 
-		posthogAPIKey := os.Getenv("VIX_POSTHOG_API_KEY")
-		if posthogAPIKey == "" {
+		// The analytics key is embedded at build time (see script/build.sh).
+		// It is empty in plain dev builds, which keeps telemetry inert there.
+		if embeddedAPIKey == "" {
 			return
 		}
 
@@ -70,10 +78,14 @@ func Init(cfg Config) {
 		}
 		deviceID = id
 
-		c, err := posthog.NewWithConfig(posthogAPIKey, posthog.Config{
+		c, err := posthog.NewWithConfig(embeddedAPIKey, posthog.Config{
 			Endpoint:  posthogHost,
 			BatchSize: 20,
 			Interval:  30 * time.Second,
+			// Bound Close() so a flush-on-crash can't hang the dying
+			// process indefinitely on a dead network (Close waits forever
+			// when ShutdownTimeout is unset).
+			ShutdownTimeout: 3 * time.Second,
 		})
 		if err != nil {
 			logDebug("[telemetry] failed to create PostHog client: %v", err)
@@ -123,6 +135,18 @@ func Track(event string, properties map[string]interface{}) {
 		Event:      event,
 		Properties: props,
 	})
+}
+
+// CaptureException reports an error or panic to PostHog error tracking.
+// typ is the title shown in the UI (e.g. "panic"); value is the description.
+// NewDefaultException auto-generates the stack trace at the call site, so this
+// is best invoked directly from a recover() block. Safe to call when telemetry
+// is disabled (no-op).
+func CaptureException(typ, value string) {
+	if !enabled {
+		return
+	}
+	client.Enqueue(posthog.NewDefaultException(time.Now(), deviceID, typ, value))
 }
 
 // HashWorkflowName returns a truncated SHA256 hex digest of the workflow name.
