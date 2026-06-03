@@ -8,6 +8,7 @@ type ProviderID string
 
 const (
 	ProviderAnthropic  ProviderID = "anthropic"
+	ProviderBedrock    ProviderID = "bedrock"
 	ProviderOpenAI     ProviderID = "openai"
 	ProviderOpenRouter ProviderID = "openrouter"
 	ProviderMiniMax    ProviderID = "minimax"
@@ -26,6 +27,17 @@ func (p ProviderID) CredentialName() string {
 // Credential resolution allows OAuth tokens for these providers.
 func (p ProviderID) UsesOAuth() bool {
 	return p == ProviderAnthropic || p == ProviderCodex
+}
+
+// EnvVar returns the canonical environment variable name for this provider's
+// credential. Returns "" for providers that use OAuth or have no env var.
+func (p ProviderID) EnvVar() string {
+	switch p {
+	case ProviderBedrock:
+		return "AWS_BEARER_TOKEN_BEDROCK"
+	default:
+		return ""
+	}
 }
 
 // Role identifies the author of a message.
